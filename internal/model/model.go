@@ -39,7 +39,6 @@ var (
 		b.Left = "┤"
 		return titleStyle.Copy().BorderStyle(b)
 	}()
-	example = `Hello, is it me you're looking for? I can see it in your eyes, I can see it in your smile. Hello`
 )
 
 type Model struct {
@@ -125,7 +124,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ready {
 			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight-3)
 			m.viewport.YPosition = headerHeight
-			m.viewport.SetContent(m.content)
+			m.viewport.SetContent(m.renderSlideContent(m.Slides[m.Page]))
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
@@ -193,6 +192,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}, keyPress)
 			m.buffer = newState.Buffer
 			m.SetPage(newState.Page)
+			m.viewport.SetContent(m.renderSlideContent(m.Slides[m.Page]))
 		}
 
 	case fileWatchMsg:
@@ -206,7 +206,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, fileWatchCmd())
 	}
-
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
@@ -216,14 +215,6 @@ func (m Model) View() string {
 	if !m.ready {
 		return "\n initializing..."
 	}
-	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(m.viewport.Width))
-	slide := m.Slides[m.Page]
-	slide, err := r.Render(slide)
-	slide += m.VirtualText
-	if err != nil {
-		slide = fmt.Sprintf("Error: Could not render markdown! (%v)", err)
-	}
-	slide = styles.Slide.Render(slide)
 
 	var left string
 	if m.Search.Active {
