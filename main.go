@@ -38,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(presentation, tea.WithAltScreen())
+	p := tea.NewProgram(presentation, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	err = p.Start()
 	if err != nil {
 		printError(err)

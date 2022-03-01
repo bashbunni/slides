@@ -102,7 +102,6 @@ func (m *Model) Load() error {
 		slides = slides[1:]
 	}
 
-	m.content = content
 	m.Slides = slides
 	m.Author = metaData.Author
 	m.Date = time.Now().Format(metaData.Date)
@@ -110,7 +109,7 @@ func (m *Model) Load() error {
 	if m.Theme == nil {
 		m.Theme = styles.SelectTheme(metaData.Theme)
 	}
-
+	m.content = m.renderSlideContent(slides[0])
 	return nil
 }
 
@@ -124,21 +123,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		verticalMarginHeight := headerHeight + footerHeight
 
 		if !m.ready {
-			// Since this program is using the full size of the viewport we
-			// need to wait until we've received the window dimensions before
-			// we can initialize the viewport. The initial dimensions come in
-			// quickly, though asynchronously, which is why we wait for them
-			// here.
-			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight)
+			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight-3)
 			m.viewport.YPosition = headerHeight
 			m.viewport.SetContent(m.content)
 			m.ready = true
-
-			// This is only necessary for high performance rendering, which in
-			// most cases you won't need.
-			//
-			// Render the viewport one line below the header.
-			m.viewport.YPosition = headerHeight + 1
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - verticalMarginHeight
@@ -170,7 +158,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			var cmd tea.Cmd
 			m.Search.SearchTextInput, cmd = m.Search.SearchTextInput.Update(msg)
-			return m, cmd
+			cmds = append(cmds, cmd)
 		}
 
 		switch keyPress {
@@ -218,6 +206,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, fileWatchCmd())
 	}
+
+	m.viewport, cmd = m.viewport.Update(msg)
+	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -245,7 +236,7 @@ func (m Model) View() string {
 
 	right := styles.Page.Render(m.paging())
 	status := styles.Status.Render(styles.JoinHorizontal(left, right, m.viewport.Width))
-	newContent := fmt.Sprintf("%s\n%s\n%s", m.headerView(), slide, m.footerView())
+	newContent := fmt.Sprintf("%s\n%s\n%s", m.headerView(), m.viewport.View(), m.footerView())
 	return styles.JoinVertical(newContent, status, m.viewport.Height)
 }
 
@@ -350,4 +341,15 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (m Model) renderSlideContent(content string) string {
+	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(m.viewport.Width))
+	slide, err := r.Render(content)
+	slide += m.VirtualText
+	if err != nil {
+		slide = fmt.Sprintf("Error: Could not render markdown! (%v)", err)
+	}
+	slide = styles.Slide.Render(slide)
+	return slide
 }
