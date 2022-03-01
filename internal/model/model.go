@@ -216,6 +216,7 @@ func (m Model) View() string {
 		return "\n initializing..."
 	}
 
+	m.viewport.SetContent(m.renderSlideContent(m.Slides[m.Page]))
 	var left string
 	if m.Search.Active {
 		// render search bar
