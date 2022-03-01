@@ -4,18 +4,20 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"github.com/maaslalani/slides/internal/file"
-	"github.com/maaslalani/slides/internal/navigation"
-	"github.com/maaslalani/slides/internal/process"
 	"io"
 	"io/ioutil"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/maaslalani/slides/internal/file"
+	"github.com/maaslalani/slides/internal/navigation"
+	"github.com/maaslalani/slides/internal/process"
+
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/maaslalani/slides/internal/code"
 	"github.com/maaslalani/slides/internal/meta"
 	"github.com/maaslalani/slides/styles"
@@ -23,6 +25,21 @@ import (
 
 const (
 	delimiter = "\n---\n"
+)
+
+var (
+	titleStyle = func() lipgloss.Style {
+		b := lipgloss.RoundedBorder()
+		b.Right = "├"
+		return lipgloss.NewStyle().BorderStyle(b).Padding(0, 1)
+	}()
+
+	infoStyle = func() lipgloss.Style {
+		b := lipgloss.RoundedBorder()
+		b.Left = "┤"
+		return titleStyle.Copy().BorderStyle(b)
+	}()
+	example = `Hello, is it me you're looking for? I can see it in your eyes, I can see it in your smile. Hello`
 )
 
 type Model struct {
@@ -39,6 +56,8 @@ type Model struct {
 	// original slides, it will be displayed on a slide and reset on page change
 	VirtualText string
 	Search      navigation.Search
+	ready       bool
+	content     string
 }
 
 type fileWatchMsg struct{}
@@ -83,6 +102,7 @@ func (m *Model) Load() error {
 		slides = slides[1:]
 	}
 
+	m.content = content
 	m.Slides = slides
 	m.Author = metaData.Author
 	m.Date = time.Now().Format(metaData.Date)
@@ -95,11 +115,36 @@ func (m *Model) Load() error {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.viewport.Width = msg.Width
-		m.viewport.Height = msg.Height
-		return m, nil
+		headerHeight := lipgloss.Height(m.headerView())
+		footerHeight := lipgloss.Height(m.footerView())
+		verticalMarginHeight := headerHeight + footerHeight
+
+		if !m.ready {
+			// Since this program is using the full size of the viewport we
+			// need to wait until we've received the window dimensions before
+			// we can initialize the viewport. The initial dimensions come in
+			// quickly, though asynchronously, which is why we wait for them
+			// here.
+			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight)
+			m.viewport.YPosition = headerHeight
+			m.viewport.SetContent(m.content)
+			m.ready = true
+
+			// This is only necessary for high performance rendering, which in
+			// most cases you won't need.
+			//
+			// Render the viewport one line below the header.
+			m.viewport.YPosition = headerHeight + 1
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height - verticalMarginHeight
+		}
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
 
 	case tea.KeyMsg:
 		keyPress := msg.String()
@@ -143,7 +188,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				// We couldn't parse the code block on the screen
 				m.VirtualText = "\n" + err.Error()
-				return m, nil
 			}
 			var outs []string
 			for _, block := range blocks {
@@ -172,12 +216,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Page = len(m.Slides) - 1
 			}
 		}
-		return m, fileWatchCmd()
+		cmds = append(cmds, fileWatchCmd())
 	}
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) View() string {
+	if !m.ready {
+		return "\n initializing..."
+	}
 	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(m.viewport.Width))
 	slide := m.Slides[m.Page]
 	slide, err := r.Render(slide)
@@ -198,7 +245,8 @@ func (m Model) View() string {
 
 	right := styles.Page.Render(m.paging())
 	status := styles.Status.Render(styles.JoinHorizontal(left, right, m.viewport.Width))
-	return styles.JoinVertical(slide, status, m.viewport.Height)
+	newContent := fmt.Sprintf("%s\n%s\n%s", m.headerView(), slide, m.footerView())
+	return styles.JoinVertical(newContent, status, m.viewport.Height)
 }
 
 func (m *Model) paging() string {
@@ -282,4 +330,24 @@ func (m *Model) SetPage(page int) {
 
 func (m *Model) Pages() []string {
 	return m.Slides
+}
+
+// pager
+func (m *Model) headerView() string {
+	title := titleStyle.Render("Mr. Pager")
+	line := strings.Repeat("─", max(0, m.viewport.Width-lipgloss.Width(title)))
+	return lipgloss.JoinHorizontal(lipgloss.Center, title, line)
+}
+
+func (m *Model) footerView() string {
+	info := infoStyle.Render(fmt.Sprintf("%3.f%%", m.viewport.ScrollPercent()*100))
+	line := strings.Repeat("─", max(0, m.viewport.Width-lipgloss.Width(info)))
+	return lipgloss.JoinHorizontal(lipgloss.Center, line, info)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
